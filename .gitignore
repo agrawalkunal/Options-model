@@ -39,7 +39,7 @@ wheels/
 *.csv
 *.json
 !package.json
-data/
+/data/
 
 # Logs
 *.log
