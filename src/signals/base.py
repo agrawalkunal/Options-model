@@ -2,9 +2,12 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time
 from enum import Enum
 from typing import Optional, List
+
+# Maximum option price for recommendations
+MAX_OPTION_PRICE = 1.00
 
 
 class SignalDirection(Enum):
@@ -88,6 +91,49 @@ class BaseSignal(ABC):
     def is_friday(self) -> bool:
         """Check if today is Friday."""
         return datetime.now().weekday() == 4
+
+    def is_thursday(self) -> bool:
+        """Check if today is Thursday."""
+        return datetime.now().weekday() == 3
+
+    def is_valid_entry_window(self) -> bool:
+        """Check if current time is within valid entry window.
+
+        Entry windows:
+        - Thursday: 9:30 AM - 4:00 PM ET
+        - Friday: 9:30 AM - 3:00 PM ET
+        """
+        now = datetime.now()
+        weekday = now.weekday()
+        current_time = now.time()
+
+        market_open = time(9, 30)
+
+        if weekday == 4:  # Friday
+            market_close = time(15, 0)  # 3:00 PM ET
+        elif weekday == 3:  # Thursday
+            market_close = time(16, 0)  # 4:00 PM ET
+        else:
+            return False
+
+        return market_open <= current_time <= market_close
+
+    def filter_strikes_by_price(self, strikes: List[dict], max_price: float = MAX_OPTION_PRICE) -> List[dict]:
+        """Filter strikes to only include options under max price.
+
+        Args:
+            strikes: List of strike dictionaries with 'last_price' or 'ask' key
+            max_price: Maximum option price (default $1.00)
+
+        Returns:
+            Filtered list of strikes
+        """
+        filtered = []
+        for strike in strikes:
+            price = strike.get('last_price') or strike.get('ask') or 0
+            if price > 0 and price <= max_price:
+                filtered.append(strike)
+        return filtered
 
     def calculate_strike_recommendations(self, current_price: float,
                                          direction: SignalDirection) -> List[dict]:

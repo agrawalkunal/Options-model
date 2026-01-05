@@ -1,23 +1,23 @@
 """Friday 0DTE setup signal detector.
 
-Detects favorable conditions for 0DTE options plays on Fridays:
+Detects favorable conditions for 0DTE options plays on Thursday/Friday:
 - Pre-market momentum
 - High open interest on OTM strikes
 - Unusual volume patterns
 """
 
 import logging
-from datetime import datetime, time
+from datetime import datetime
 from typing import Optional
 
-from .base import BaseSignal, Signal, SignalDirection, SignalStrength
+from .base import BaseSignal, Signal, SignalDirection, SignalStrength, MAX_OPTION_PRICE
 from ..data.schwab_client import get_client
 
 logger = logging.getLogger(__name__)
 
 
 class Friday0DTESignal(BaseSignal):
-    """Detects favorable 0DTE setups on Fridays."""
+    """Detects favorable 0DTE setups on Thursday and Friday."""
 
     def __init__(self):
         super().__init__("Friday 0DTE Setup")
@@ -43,9 +43,14 @@ class Friday0DTESignal(BaseSignal):
         if not self.enabled:
             return None
 
-        # Only run on Fridays
-        if not self.is_friday():
-            logger.debug("Not Friday - skipping 0DTE check")
+        # Only run on Thursday or Friday
+        if not self.is_valid_trading_day():
+            logger.debug("Not Thursday/Friday - skipping 0DTE check")
+            return None
+
+        # Check if within valid entry window
+        if not self.is_valid_entry_window():
+            logger.debug("Outside valid entry window - skipping 0DTE check")
             return None
 
         try:
@@ -136,10 +141,10 @@ class Friday0DTESignal(BaseSignal):
         factors = []
         confidence = 0.0
 
-        # Factor 1: Pre-market momentum
+        # Factor 1: Pre-market momentum (+0.1 if >= 2%)
         if abs(change_pct) >= self.premarket_momentum_threshold * 100:
             factors.append(f"Strong pre-market momentum: {change_pct:+.1f}%")
-            confidence += 0.3
+            confidence += 0.1
 
         # Determine direction from momentum
         if change_pct > self.premarket_momentum_threshold * 100:
@@ -176,15 +181,11 @@ class Friday0DTESignal(BaseSignal):
                         factors.append(f"Unusual volume on {len(high_vol)} strikes")
                         confidence += 0.2
 
-        # Factor 3: Time of day (early morning is better for 0DTE)
-        now = datetime.now().time()
-        if time(9, 30) <= now <= time(11, 0):
-            factors.append("Optimal entry window (morning)")
+        # Factor 3: Valid entry window (+0.1)
+        if self.is_valid_entry_window():
+            day_type = "Friday" if self.is_friday() else "Thursday"
+            factors.append(f"Within {day_type} entry window")
             confidence += 0.1
-
-        # Factor 4: It's Friday with 0DTE available
-        factors.append("Friday 0DTE expiration available")
-        confidence += 0.2
 
         is_favorable = confidence >= 0.5 and direction != SignalDirection.NEUTRAL
 
@@ -197,7 +198,7 @@ class Friday0DTESignal(BaseSignal):
 
     def _get_best_strikes(self, current_price: float, direction: SignalDirection,
                           calls, puts) -> list:
-        """Get the best strikes from the options chain.
+        """Get the best strikes from the options chain, filtered by price.
 
         Args:
             current_price: Current stock price
@@ -206,40 +207,52 @@ class Friday0DTESignal(BaseSignal):
             puts: Puts DataFrame
 
         Returns:
-            List of recommended strike dictionaries
+            List of recommended strike dictionaries (options under $1.00)
         """
         recommendations = []
 
         if direction == SignalDirection.CALL and calls is not None:
-            otm = calls[calls['strike'] > current_price].head(5)
+            otm = calls[calls['strike'] > current_price].head(10)
             for _, row in otm.iterrows():
-                otm_pct = ((row['strike'] - current_price) / current_price) * 100
-                recommendations.append({
-                    "strike": row['strike'],
-                    "type": "CALL",
-                    "otm_pct": round(otm_pct, 1),
-                    "last_price": row.get('lastPrice', 0),
-                    "bid": row.get('bid', 0),
-                    "ask": row.get('ask', 0),
-                    "volume": int(row.get('volume', 0)) if row.get('volume') else 0,
-                    "open_interest": int(row.get('openInterest', 0)) if row.get('openInterest') else 0,
-                    "iv": row.get('impliedVolatility', 0),
-                })
+                last_price = row.get('lastPrice', 0)
+                ask_price = row.get('ask', 0)
+                option_price = last_price or ask_price or 0
+
+                # Only include options priced under $1.00
+                if option_price > 0 and option_price <= MAX_OPTION_PRICE:
+                    otm_pct = ((row['strike'] - current_price) / current_price) * 100
+                    recommendations.append({
+                        "strike": row['strike'],
+                        "type": "CALL",
+                        "otm_pct": round(otm_pct, 1),
+                        "last_price": last_price,
+                        "bid": row.get('bid', 0),
+                        "ask": ask_price,
+                        "volume": int(row.get('volume', 0)) if row.get('volume') else 0,
+                        "open_interest": int(row.get('openInterest', 0)) if row.get('openInterest') else 0,
+                        "iv": row.get('impliedVolatility', 0),
+                    })
 
         elif direction == SignalDirection.PUT and puts is not None:
-            otm = puts[puts['strike'] < current_price].tail(5).iloc[::-1]
+            otm = puts[puts['strike'] < current_price].tail(10).iloc[::-1]
             for _, row in otm.iterrows():
-                otm_pct = ((current_price - row['strike']) / current_price) * 100
-                recommendations.append({
-                    "strike": row['strike'],
-                    "type": "PUT",
-                    "otm_pct": round(otm_pct, 1),
-                    "last_price": row.get('lastPrice', 0),
-                    "bid": row.get('bid', 0),
-                    "ask": row.get('ask', 0),
-                    "volume": int(row.get('volume', 0)) if row.get('volume') else 0,
-                    "open_interest": int(row.get('openInterest', 0)) if row.get('openInterest') else 0,
-                    "iv": row.get('impliedVolatility', 0),
-                })
+                last_price = row.get('lastPrice', 0)
+                ask_price = row.get('ask', 0)
+                option_price = last_price or ask_price or 0
+
+                # Only include options priced under $1.00
+                if option_price > 0 and option_price <= MAX_OPTION_PRICE:
+                    otm_pct = ((current_price - row['strike']) / current_price) * 100
+                    recommendations.append({
+                        "strike": row['strike'],
+                        "type": "PUT",
+                        "otm_pct": round(otm_pct, 1),
+                        "last_price": last_price,
+                        "bid": row.get('bid', 0),
+                        "ask": ask_price,
+                        "volume": int(row.get('volume', 0)) if row.get('volume') else 0,
+                        "open_interest": int(row.get('openInterest', 0)) if row.get('openInterest') else 0,
+                        "iv": row.get('impliedVolatility', 0),
+                    })
 
         return recommendations[:3]  # Return top 3

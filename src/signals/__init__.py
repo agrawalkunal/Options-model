@@ -3,6 +3,7 @@ from .base import Signal, SignalDirection, SignalStrength, BaseSignal
 from .ad_sector import AdSectorSignal
 from .company_news import CompanyNewsSignal
 from .friday_0dte import Friday0DTESignal
+from .live_news import LiveNewsSignal
 
 __all__ = [
     "Signal",
@@ -12,4 +13,5 @@ __all__ = [
     "AdSectorSignal",
     "CompanyNewsSignal",
     "Friday0DTESignal",
+    "LiveNewsSignal",
 ]

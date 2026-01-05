@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
 
-from src.signals import AdSectorSignal, CompanyNewsSignal, Friday0DTESignal, Signal
+from src.signals import AdSectorSignal, CompanyNewsSignal, Friday0DTESignal, LiveNewsSignal, Signal
 from src.alerts import get_notifier
 from src.data.schwab_client import get_client
 
@@ -41,23 +41,28 @@ MARKET_OPEN = time(9, 30)
 MARKET_CLOSE = time(16, 0)
 PREMARKET_START = time(9, 0)
 
-# Signal check interval in minutes
-CHECK_INTERVAL = 5
+# Signal check intervals in minutes
+CHECK_INTERVAL = 5  # Standard signals
+LIVE_NEWS_INTERVAL = 2  # Live news checks (more frequent)
 
 
 class TradingAlertSystem:
     """Main trading alert system that orchestrates signal detection and notifications."""
 
     def __init__(self):
+        # Standard signals (checked every 5 minutes)
         self.signals = [
             AdSectorSignal(),
             CompanyNewsSignal(),
             Friday0DTESignal(),
         ]
+        # Live news signal (checked every 2 minutes)
+        self.live_news_signal = LiveNewsSignal()
         self.notifier = get_notifier()
         self.market_client = get_client()
         self.signals_today: List[Signal] = []
         self.last_check = None
+        self.last_live_news_check = None
 
     def is_trading_day(self) -> bool:
         """Check if today is Thursday or Friday."""
@@ -111,7 +116,7 @@ class TradingAlertSystem:
         return False
 
     def run_check(self):
-        """Run a single signal check cycle."""
+        """Run a single signal check cycle for standard signals."""
         if not self.is_trading_day():
             logger.info("Not a trading day (Thursday/Friday). Skipping check.")
             return
@@ -120,7 +125,7 @@ class TradingAlertSystem:
             logger.info("Outside market hours. Skipping check.")
             return
 
-        logger.info("Running signal check...")
+        logger.info("Running standard signal check...")
         self.last_check = datetime.now()
 
         signals = self.check_signals()
@@ -130,6 +135,25 @@ class TradingAlertSystem:
             self.process_signals(signals)
         else:
             logger.info("No actionable signals detected")
+
+    def run_live_news_check(self):
+        """Run live news check (more frequent than standard signals)."""
+        if not self.is_trading_day():
+            return
+
+        if not self.is_market_hours():
+            return
+
+        logger.debug("Running live news check...")
+        self.last_live_news_check = datetime.now()
+
+        try:
+            signal = self.live_news_signal.check()
+            if signal and signal.is_actionable:
+                logger.info(f"Live news signal detected: {signal}")
+                self.process_signals([signal])
+        except Exception as e:
+            logger.error(f"Error checking live news: {e}")
 
     def send_daily_summary(self):
         """Send end-of-day summary."""
@@ -150,19 +174,24 @@ class TradingAlertSystem:
         logger.info("=" * 50)
         logger.info("APP Options Trading Alert System Starting")
         logger.info("=" * 50)
-        logger.info(f"Check interval: {CHECK_INTERVAL} minutes")
+        logger.info(f"Standard signal check interval: {CHECK_INTERVAL} minutes")
+        logger.info(f"Live news check interval: {LIVE_NEWS_INTERVAL} minutes")
         logger.info(f"Active days: Thursday, Friday")
         logger.info(f"Market hours: {PREMARKET_START} - {MARKET_CLOSE}")
         logger.info("=" * 50)
 
-        # Schedule regular checks during market hours
+        # Schedule standard signal checks (every 5 minutes)
         schedule.every(CHECK_INTERVAL).minutes.do(self.run_check)
+
+        # Schedule live news checks (every 2 minutes)
+        schedule.every(LIVE_NEWS_INTERVAL).minutes.do(self.run_live_news_check)
 
         # Schedule daily summary at market close
         schedule.every().day.at("16:05").do(self.send_daily_summary)
 
-        # Run initial check
+        # Run initial checks
         self.run_check()
+        self.run_live_news_check()
 
         # Main loop
         logger.info("Entering main loop. Press Ctrl+C to stop.")
@@ -189,16 +218,24 @@ def test_mode():
     else:
         logger.warning("Discord webhook test failed - check your DISCORD_WEBHOOK_URL")
 
-    # Run a single check
-    logger.info("Running single signal check...")
+    # Run a single check on standard signals
+    logger.info("Running standard signal check...")
     signals = system.check_signals()
 
     if signals:
-        logger.info(f"Found {len(signals)} signals:")
+        logger.info(f"Found {len(signals)} standard signals:")
         for signal in signals:
             logger.info(f"  - {signal}")
     else:
-        logger.info("No signals detected (this is normal if no catalyst present)")
+        logger.info("No standard signals detected (this is normal if no catalyst present)")
+
+    # Run live news check
+    logger.info("Running live news signal check...")
+    live_signal = system.live_news_signal.check()
+    if live_signal:
+        logger.info(f"Live news signal: {live_signal}")
+    else:
+        logger.info("No live news signal detected")
 
     # Get current APP quote
     quote = system.market_client.get_quote("APP")
