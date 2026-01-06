@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from src.signals import AdSectorSignal, CompanyNewsSignal, Friday0DTESignal, LiveNewsSignal, Signal
 from src.alerts import get_notifier
 from src.data.schwab_client import get_client
+from src.data.options_history import get_collector, get_options_db
 
 # Load environment variables
 load_dotenv()
@@ -63,6 +64,10 @@ class TradingAlertSystem:
         self.signals_today: List[Signal] = []
         self.last_check = None
         self.last_live_news_check = None
+
+        # Options history data collector
+        self.options_collector = get_collector()
+        self.options_db = get_options_db()
 
     def is_trading_day(self) -> bool:
         """Check if today is Thursday or Friday."""
@@ -169,6 +174,47 @@ class TradingAlertSystem:
         except Exception as e:
             logger.error(f"Error sending daily summary: {e}")
 
+    def collect_options_data(self):
+        """Collect option price snapshot for historical tracking."""
+        if not self.is_trading_day():
+            return
+
+        if not self.is_market_hours():
+            return
+
+        try:
+            count = self.options_collector.collect_snapshot()
+            if count > 0:
+                logger.debug(f"Collected {count} option price snapshots")
+        except Exception as e:
+            logger.error(f"Options data collection error: {e}")
+
+    def recalculate_averages(self):
+        """Recalculate 6-week rolling averages at end of trading day."""
+        if not self.is_trading_day():
+            return
+
+        try:
+            success = self.options_db.calculate_and_store_averages()
+            if success:
+                logger.info("Historical price averages recalculated")
+            else:
+                logger.warning("Failed to recalculate historical averages")
+        except Exception as e:
+            logger.error(f"Average calculation error: {e}")
+
+    def cleanup_old_history(self):
+        """Remove option price data older than 6 weeks."""
+        if not self.is_trading_day():
+            return
+
+        try:
+            deleted = self.options_db.cleanup_old_data(weeks=6)
+            if deleted > 0:
+                logger.info(f"Cleaned up {deleted} old option price snapshots")
+        except Exception as e:
+            logger.error(f"History cleanup error: {e}")
+
     def run(self):
         """Start the main loop with scheduled checks."""
         logger.info("=" * 50)
@@ -176,8 +222,13 @@ class TradingAlertSystem:
         logger.info("=" * 50)
         logger.info(f"Standard signal check interval: {CHECK_INTERVAL} minutes")
         logger.info(f"Live news check interval: {LIVE_NEWS_INTERVAL} minutes")
+        logger.info(f"Options data collection: Every {CHECK_INTERVAL} minutes")
         logger.info(f"Active days: Thursday, Friday")
         logger.info(f"Market hours: {PREMARKET_START} - {MARKET_CLOSE}")
+
+        # Log options history status
+        snapshot_count = self.options_db.get_snapshot_count()
+        logger.info(f"Historical option snapshots in DB: {snapshot_count}")
         logger.info("=" * 50)
 
         # Schedule standard signal checks (every 5 minutes)
@@ -186,8 +237,17 @@ class TradingAlertSystem:
         # Schedule live news checks (every 2 minutes)
         schedule.every(LIVE_NEWS_INTERVAL).minutes.do(self.run_live_news_check)
 
+        # Schedule options data collection (every 5 minutes during market hours)
+        schedule.every(CHECK_INTERVAL).minutes.do(self.collect_options_data)
+
+        # Schedule average recalculation at market close
+        schedule.every().day.at("16:01").do(self.recalculate_averages)
+
+        # Schedule cleanup of old data
+        schedule.every().day.at("16:05").do(self.cleanup_old_history)
+
         # Schedule daily summary at market close
-        schedule.every().day.at("16:05").do(self.send_daily_summary)
+        schedule.every().day.at("16:10").do(self.send_daily_summary)
 
         # Run initial checks
         self.run_check()

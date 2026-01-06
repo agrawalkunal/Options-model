@@ -4,7 +4,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, time
 from enum import Enum
-from typing import Optional, List
+from typing import Optional, List, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Maximum option price for recommendations
 MAX_OPTION_PRICE = 1.00
@@ -168,3 +171,29 @@ class BaseSignal(ABC):
             ]
 
         return recommendations
+
+    def evaluate_price_comparison(self, strikes: List[dict], stock_price: float,
+                                   option_type: str, dte: int = 0) -> Tuple[List[dict], float]:
+        """Evaluate strikes against historical price averages.
+
+        Adds price comparison data to each strike and returns confidence boost
+        if any strike shows elevated pricing (>34% above 6-week average).
+
+        Args:
+            strikes: List of strike recommendation dicts
+            stock_price: Current stock price
+            option_type: 'CALL' or 'PUT'
+            dte: Days to expiration (0 or 1)
+
+        Returns:
+            Tuple of (enhanced_strikes, max_confidence_boost)
+            - enhanced_strikes: strikes with 'price_comparison' data added
+            - max_confidence_boost: highest boost found (0.0 or 0.3)
+        """
+        try:
+            from ..data.options_history import get_price_checker
+            checker = get_price_checker()
+            return checker.evaluate_strikes(strikes, stock_price, option_type, dte)
+        except Exception as e:
+            logger.warning(f"Price comparison unavailable: {e}")
+            return strikes, 0.0

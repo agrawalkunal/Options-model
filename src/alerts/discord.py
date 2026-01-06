@@ -75,9 +75,16 @@ class DiscordNotifier:
                 SignalStrength.MODERATE: "⚡",
                 SignalStrength.WEAK: "💡"
             }
+            strength_value = f"{strength_emoji.get(signal.strength, '')} {signal.strength.name}\nConfidence: {signal.confidence:.0%}"
+
+            # Add price comparison boost indicator if present
+            price_boost = details.get("price_comparison_boost", 0)
+            if price_boost > 0:
+                strength_value += f"\n📊 +{price_boost:.0%} price boost"
+
             embed.add_embed_field(
                 name="💪 Strength",
-                value=f"{strength_emoji.get(signal.strength, '')} {signal.strength.name}\nConfidence: {signal.confidence:.0%}",
+                value=strength_value,
                 inline=True
             )
 
@@ -163,9 +170,19 @@ class DiscordNotifier:
 
             if last_price or bid or ask:
                 price_info = f"@ ${last_price:.2f}" if last_price else f"Bid/Ask: ${bid:.2f}/${ask:.2f}"
-                lines.append(f"• **${strike_price:.0f}{strike_type[0]}** ({otm_pct:.1f}% OTM) {price_info}")
+                line = f"• **${strike_price:.0f}{strike_type[0]}** ({otm_pct:.1f}% OTM) {price_info}"
             else:
-                lines.append(f"• **${strike_price:.0f}{strike_type[0]}** ({otm_pct:.1f}% OTM)")
+                line = f"• **${strike_price:.0f}{strike_type[0]}** ({otm_pct:.1f}% OTM)"
+
+            # Add price comparison indicator if present
+            comparison = strike.get("price_comparison", {})
+            if comparison.get("is_elevated"):
+                elevation_pct = comparison.get("elevation_pct", 0) * 100
+                line += f" **[+{elevation_pct:.0f}% vs avg]**"
+            elif comparison.get("has_historical_data") is False:
+                line += " *(no history)*"
+
+            lines.append(line)
 
         return "\n".join(lines)
 

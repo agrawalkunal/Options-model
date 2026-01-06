@@ -95,11 +95,27 @@ class CompanyNewsSignal(BaseSignal):
             # Calculate strikes
             strikes = self.calculate_strike_recommendations(current_price, direction)
 
+            # Apply price comparison check
+            dte = 0 if self.is_friday() else 1
+            option_type = 'CALL' if direction == SignalDirection.CALL else 'PUT'
+            enhanced_strikes, price_boost = self.evaluate_price_comparison(
+                strikes, current_price, option_type, dte
+            )
+
+            # Apply confidence boost from price comparison
+            final_confidence = min(confidence + price_boost, 1.0)
+
+            # Re-evaluate strength with updated confidence
+            if final_confidence >= 0.8:
+                strength = SignalStrength.STRONG
+            elif final_confidence >= 0.6:
+                strength = SignalStrength.MODERATE
+
             signal = Signal(
                 name=self.name,
                 direction=direction,
                 strength=strength,
-                confidence=confidence,
+                confidence=final_confidence,
                 timestamp=datetime.now(),
                 details={
                     "catalyst_type": "company_news",
@@ -109,8 +125,9 @@ class CompanyNewsSignal(BaseSignal):
                     "impact_score": impact_score,
                     "news_url": article.url,
                     "current_price": current_price,
+                    "price_comparison_boost": price_boost,
                 },
-                recommended_strikes=strikes
+                recommended_strikes=enhanced_strikes
             )
 
             logger.info(f"Company news signal detected: {signal}")
