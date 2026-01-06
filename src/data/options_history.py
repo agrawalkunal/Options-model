@@ -61,7 +61,7 @@ class OptionsHistoryDB:
                     dte INTEGER NOT NULL,
                     option_type VARCHAR(4) NOT NULL,
                     strike REAL NOT NULL,
-                    strike_distance INTEGER NOT NULL,
+                    strike_distance REAL NOT NULL,
                     mid_price REAL,
                     last_price REAL,
                     bid REAL,
@@ -89,7 +89,7 @@ class OptionsHistoryDB:
                     calculated_at DATETIME NOT NULL,
                     symbol VARCHAR(10) NOT NULL DEFAULT 'APP',
                     option_type VARCHAR(4) NOT NULL,
-                    strike_distance INTEGER NOT NULL,
+                    strike_distance REAL NOT NULL,
                     dte INTEGER NOT NULL,
                     avg_mid_price REAL NOT NULL,
                     sample_count INTEGER NOT NULL,
@@ -221,13 +221,13 @@ class OptionsHistoryDB:
         finally:
             conn.close()
 
-    def get_average_price(self, option_type: str, strike_distance: int,
+    def get_average_price(self, option_type: str, strike_distance: float,
                           dte: int, symbol: str = 'APP') -> Optional[float]:
         """Get the most recent 6-week average mid price for a strike distance bucket.
 
         Args:
             option_type: 'CALL' or 'PUT'
-            strike_distance: Dollar distance (+1 to +10 for calls, -1 to -10 for puts)
+            strike_distance: Dollar distance rounded to nearest $0.50
             dte: Days to expiration (0 or 1)
             symbol: Stock symbol
 
@@ -406,16 +406,16 @@ class OptionsDataCollector:
         self.market_client = get_client()
 
     def calculate_strike_distance(self, strike: float, stock_price: float,
-                                   option_type: str) -> int:
-        """Calculate strike distance in dollars, rounded to nearest integer.
+                                   option_type: str) -> float:
+        """Calculate strike distance in dollars, rounded to nearest $0.50.
 
         For CALLS (OTM means strike > stock_price):
-            distance = round(strike - stock_price)
-            Result: +1, +2, +7, +12, etc. (actual dollar distance)
+            distance = round_to_half(strike - stock_price)
+            Result: +2.5, +5.0, +7.5, +10.0, etc. (actual dollar distance)
 
         For PUTS (OTM means strike < stock_price):
-            distance = -round(stock_price - strike)
-            Result: -1, -2, -7, -12, etc. (actual dollar distance)
+            distance = -round_to_half(stock_price - strike)
+            Result: -2.5, -5.0, -7.5, -10.0, etc. (actual dollar distance)
 
         Args:
             strike: Strike price
@@ -423,16 +423,20 @@ class OptionsDataCollector:
             option_type: 'CALL' or 'PUT'
 
         Returns:
-            Integer strike distance (positive for calls, negative for puts)
+            Float strike distance rounded to nearest 0.50 (positive for calls, negative for puts)
         """
+        def round_to_half(value: float) -> float:
+            """Round to nearest 0.50"""
+            return round(value * 2) / 2
+
         if option_type == 'CALL':
-            distance = round(strike - stock_price)
-            # Ensure at least +1 for OTM calls
-            return max(1, distance)
+            distance = round_to_half(strike - stock_price)
+            # Ensure at least +0.5 for OTM calls
+            return max(0.5, distance)
         else:  # PUT
-            distance = round(stock_price - strike)
-            # Return negative for puts, ensure at least -1 for OTM puts
-            return -max(1, distance)
+            distance = round_to_half(stock_price - strike)
+            # Return negative for puts, ensure at least -0.5 for OTM puts
+            return -max(0.5, distance)
 
     def collect_snapshot(self, symbol: str = 'APP') -> int:
         """Collect current option prices for 0DTE and 1DTE options.
@@ -594,7 +598,7 @@ class PriceComparisonChecker:
         self.db = db or OptionsHistoryDB()
 
     def check_price_elevation(self, current_price: float, option_type: str,
-                               strike_distance: int, dte: int,
+                               strike_distance: float, dte: int,
                                symbol: str = 'APP') -> dict:
         """Check if current price exceeds 6-week average by threshold.
 
@@ -689,13 +693,16 @@ class PriceComparisonChecker:
             strike_price = strike_data.get('strike', 0)
             option_price = strike_data.get('last_price') or strike_data.get('ask') or 0
 
-            # Calculate strike distance (actual dollars, no clamping)
+            # Calculate strike distance (rounded to nearest $0.50)
+            def round_to_half(value: float) -> float:
+                return round(value * 2) / 2
+
             if option_type == 'CALL':
-                distance = round(strike_price - stock_price)
-                distance = max(1, distance)  # At least +1 for OTM calls
+                distance = round_to_half(strike_price - stock_price)
+                distance = max(0.5, distance)  # At least +0.5 for OTM calls
             else:
-                distance = round(stock_price - strike_price)
-                distance = -max(1, distance)  # Negative, at least -1 for OTM puts
+                distance = round_to_half(stock_price - strike_price)
+                distance = -max(0.5, distance)  # Negative, at least -0.5 for OTM puts
 
             # Check price elevation
             comparison = self.check_price_elevation(
