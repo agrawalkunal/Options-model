@@ -411,11 +411,11 @@ class OptionsDataCollector:
 
         For CALLS (OTM means strike > stock_price):
             distance = round(strike - stock_price)
-            Result: +1, +2, ... +10 (clamped)
+            Result: +1, +2, +7, +12, etc. (actual dollar distance)
 
         For PUTS (OTM means strike < stock_price):
             distance = -round(stock_price - strike)
-            Result: -1, -2, ... -10 (clamped)
+            Result: -1, -2, -7, -12, etc. (actual dollar distance)
 
         Args:
             strike: Strike price
@@ -423,16 +423,16 @@ class OptionsDataCollector:
             option_type: 'CALL' or 'PUT'
 
         Returns:
-            Integer strike distance (+1 to +10 for calls, -1 to -10 for puts)
+            Integer strike distance (positive for calls, negative for puts)
         """
         if option_type == 'CALL':
             distance = round(strike - stock_price)
-            # Clamp to +1 to +10 range
-            return max(1, min(10, distance))
+            # Ensure at least +1 for OTM calls
+            return max(1, distance)
         else:  # PUT
             distance = round(stock_price - strike)
-            # Return negative for puts, clamp to -1 to -10
-            return -max(1, min(10, distance))
+            # Return negative for puts, ensure at least -1 for OTM puts
+            return -max(1, distance)
 
     def collect_snapshot(self, symbol: str = 'APP') -> int:
         """Collect current option prices for 0DTE and 1DTE options.
@@ -689,13 +689,13 @@ class PriceComparisonChecker:
             strike_price = strike_data.get('strike', 0)
             option_price = strike_data.get('last_price') or strike_data.get('ask') or 0
 
-            # Calculate strike distance
+            # Calculate strike distance (actual dollars, no clamping)
             if option_type == 'CALL':
                 distance = round(strike_price - stock_price)
-                distance = max(1, min(10, distance))
+                distance = max(1, distance)  # At least +1 for OTM calls
             else:
                 distance = round(stock_price - strike_price)
-                distance = -max(1, min(10, distance))
+                distance = -max(1, distance)  # Negative, at least -1 for OTM puts
 
             # Check price elevation
             comparison = self.check_price_elevation(
