@@ -172,6 +172,51 @@ class BaseSignal(ABC):
 
         return recommendations
 
+    def enrich_strikes_with_live_prices(self, strikes: List[dict],
+                                         symbol: str = 'APP',
+                                         expiration: str = None) -> List[dict]:
+        """Fetch live bid/ask prices for recommended strikes from Schwab API.
+
+        Args:
+            strikes: List of strike recommendation dicts
+            symbol: Stock symbol
+            expiration: Optional expiration date (YYYY-MM-DD)
+
+        Returns:
+            Enhanced strikes with live 'bid' and 'ask' prices
+        """
+        try:
+            from ..data.schwab_client import get_client
+            client = get_client()
+            chain = client.get_options_chain(symbol, expiration)
+
+            calls_df = chain.get('calls')
+            puts_df = chain.get('puts')
+
+            for strike in strikes:
+                strike_price = strike.get('strike')
+                option_type = strike.get('type', 'CALL')
+
+                # Select the appropriate dataframe
+                df = calls_df if option_type == 'CALL' else puts_df
+
+                if df is not None and not df.empty:
+                    # Find matching strike
+                    matches = df[df['strike'] == strike_price]
+                    if not matches.empty:
+                        row = matches.iloc[0]
+                        strike['bid'] = row.get('bid', 0) or 0
+                        strike['ask'] = row.get('ask', 0) or 0
+                        strike['last_price'] = row.get('lastPrice', 0) or 0
+                        strike['volume'] = int(row.get('volume', 0)) if row.get('volume') else 0
+                        strike['open_interest'] = int(row.get('openInterest', 0)) if row.get('openInterest') else 0
+
+            return strikes
+
+        except Exception as e:
+            logger.warning(f"Failed to enrich strikes with live prices: {e}")
+            return strikes
+
     def evaluate_price_comparison(self, strikes: List[dict], stock_price: float,
                                    option_type: str, dte: int = 0) -> Tuple[List[dict], float]:
         """Evaluate strikes against historical price averages.

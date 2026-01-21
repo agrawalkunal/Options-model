@@ -68,12 +68,19 @@ class AdSectorSignal(BaseSignal):
                         else SignalDirection.PUT)
 
             # Calculate confidence based on relevance and sentiment strength
-            confidence = min(catalyst["relevance"] * 1.2, 1.0)
+            base_confidence = min(catalyst["relevance"] * 1.2, 1.0)
+
+            # Build confidence breakdown
+            breakdown_components = [{
+                "name": "Relevance score",
+                "value": base_confidence,
+                "description": f"Relevance {catalyst['relevance']:.2f} x 1.2"
+            }]
 
             # Determine strength
-            if confidence >= 0.7:
+            if base_confidence >= 0.7:
                 strength = SignalStrength.STRONG
-            elif confidence >= 0.5:
+            elif base_confidence >= 0.5:
                 strength = SignalStrength.MODERATE
             else:
                 strength = SignalStrength.WEAK
@@ -89,7 +96,15 @@ class AdSectorSignal(BaseSignal):
             )
 
             # Apply confidence boost from price comparison
-            final_confidence = min(confidence + price_boost, 1.0)
+            final_confidence = min(base_confidence + price_boost, 1.0)
+
+            # Add price boost to breakdown if applicable
+            if price_boost > 0:
+                breakdown_components.append({
+                    "name": "Price comparison boost",
+                    "value": price_boost,
+                    "description": "Elevated option pricing detected"
+                })
 
             # Re-evaluate strength with updated confidence
             if final_confidence >= 0.7:
@@ -112,6 +127,11 @@ class AdSectorSignal(BaseSignal):
                     "news_url": catalyst["url"],
                     "current_price": current_price,
                     "price_comparison_boost": price_boost,
+                    "confidence_breakdown": {
+                        "components": breakdown_components,
+                        "base_confidence": base_confidence,
+                        "final_confidence": final_confidence
+                    },
                 },
                 recommended_strikes=enhanced_strikes
             )

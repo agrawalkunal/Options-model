@@ -71,7 +71,7 @@ class CompanyNewsSignal(BaseSignal):
                 logger.debug("No major APP news catalyst detected")
                 return None
 
-            article, direction, impact_score = major_news
+            article, direction, impact_score, breakdown_components = major_news
 
             # Get current price
             quote = self.market_client.get_quote("APP")
@@ -82,12 +82,12 @@ class CompanyNewsSignal(BaseSignal):
                 return None
 
             # Calculate confidence
-            confidence = min(impact_score, 1.0)
+            base_confidence = min(impact_score, 1.0)
 
             # Determine strength
-            if confidence >= 0.8:
+            if base_confidence >= 0.8:
                 strength = SignalStrength.STRONG
-            elif confidence >= 0.6:
+            elif base_confidence >= 0.6:
                 strength = SignalStrength.MODERATE
             else:
                 strength = SignalStrength.WEAK
@@ -103,7 +103,15 @@ class CompanyNewsSignal(BaseSignal):
             )
 
             # Apply confidence boost from price comparison
-            final_confidence = min(confidence + price_boost, 1.0)
+            final_confidence = min(base_confidence + price_boost, 1.0)
+
+            # Add price boost to breakdown if applicable
+            if price_boost > 0:
+                breakdown_components.append({
+                    "name": "Price comparison boost",
+                    "value": price_boost,
+                    "description": "Elevated option pricing detected"
+                })
 
             # Re-evaluate strength with updated confidence
             if final_confidence >= 0.8:
@@ -126,6 +134,11 @@ class CompanyNewsSignal(BaseSignal):
                     "news_url": article.url,
                     "current_price": current_price,
                     "price_comparison_boost": price_boost,
+                    "confidence_breakdown": {
+                        "components": breakdown_components,
+                        "base_confidence": base_confidence,
+                        "final_confidence": final_confidence
+                    },
                 },
                 recommended_strikes=enhanced_strikes
             )
@@ -144,7 +157,7 @@ class CompanyNewsSignal(BaseSignal):
             articles: List of NewsArticle objects
 
         Returns:
-            Tuple of (article, direction, impact_score) or None
+            Tuple of (article, direction, impact_score, breakdown_components) or None
         """
         for article in articles:
             title_lower = article.title.lower()
@@ -152,15 +165,27 @@ class CompanyNewsSignal(BaseSignal):
             text = f"{title_lower} {summary_lower}"
 
             # Check for major positive news
-            positive_matches = sum(1 for kw in MAJOR_POSITIVE_KEYWORDS if kw in text)
+            positive_keywords = [kw for kw in MAJOR_POSITIVE_KEYWORDS if kw in text]
+            positive_matches = len(positive_keywords)
             if positive_matches > 0:
-                impact_score = min(0.5 + (positive_matches * 0.15), 1.0)
-                return (article, SignalDirection.CALL, impact_score)
+                impact_score = min(positive_matches * 0.15, 1.0)
+                breakdown = [{
+                    "name": f"Keyword matches ({positive_matches})",
+                    "value": impact_score,
+                    "description": ", ".join(positive_keywords[:3]) + ("..." if positive_matches > 3 else "")
+                }]
+                return (article, SignalDirection.CALL, impact_score, breakdown)
 
             # Check for major negative news
-            negative_matches = sum(1 for kw in MAJOR_NEGATIVE_KEYWORDS if kw in text)
+            negative_keywords = [kw for kw in MAJOR_NEGATIVE_KEYWORDS if kw in text]
+            negative_matches = len(negative_keywords)
             if negative_matches > 0:
-                impact_score = min(0.5 + (negative_matches * 0.15), 1.0)
-                return (article, SignalDirection.PUT, impact_score)
+                impact_score = min(negative_matches * 0.15, 1.0)
+                breakdown = [{
+                    "name": f"Keyword matches ({negative_matches})",
+                    "value": impact_score,
+                    "description": ", ".join(negative_keywords[:3]) + ("..." if negative_matches > 3 else "")
+                }]
+                return (article, SignalDirection.PUT, impact_score, breakdown)
 
         return None

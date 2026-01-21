@@ -83,12 +83,13 @@ class Friday0DTESignal(BaseSignal):
                 return None
 
             direction = setup["direction"]
-            confidence = setup["confidence"]
+            base_confidence = setup["confidence"]
+            breakdown_components = setup["breakdown_components"]
 
             # Determine strength
-            if confidence >= 0.7:
+            if base_confidence >= 0.7:
                 strength = SignalStrength.STRONG
-            elif confidence >= 0.5:
+            elif base_confidence >= 0.5:
                 strength = SignalStrength.MODERATE
             else:
                 strength = SignalStrength.WEAK
@@ -109,7 +110,15 @@ class Friday0DTESignal(BaseSignal):
             )
 
             # Apply confidence boost from price comparison
-            final_confidence = min(confidence + price_boost, 1.0)
+            final_confidence = min(base_confidence + price_boost, 1.0)
+
+            # Add price boost to breakdown if applicable
+            if price_boost > 0:
+                breakdown_components.append({
+                    "name": "Price comparison boost",
+                    "value": price_boost,
+                    "description": "Elevated option pricing detected"
+                })
 
             # Re-evaluate strength with updated confidence
             if final_confidence >= 0.7:
@@ -131,6 +140,11 @@ class Friday0DTESignal(BaseSignal):
                     "expiration": chain.get("expiration"),
                     "setup_factors": setup["factors"],
                     "price_comparison_boost": price_boost,
+                    "confidence_breakdown": {
+                        "components": breakdown_components,
+                        "base_confidence": base_confidence,
+                        "final_confidence": final_confidence
+                    },
                 },
                 recommended_strikes=enhanced_strikes
             )
@@ -153,15 +167,21 @@ class Friday0DTESignal(BaseSignal):
             puts: Puts DataFrame
 
         Returns:
-            dict with setup analysis
+            dict with setup analysis including breakdown_components
         """
         factors = []
+        breakdown_components = []
         confidence = 0.0
 
         # Factor 1: Pre-market momentum (+0.1 if >= 2%)
         if abs(change_pct) >= self.premarket_momentum_threshold * 100:
             factors.append(f"Strong pre-market momentum: {change_pct:+.1f}%")
             confidence += 0.1
+            breakdown_components.append({
+                "name": "Pre-market momentum",
+                "value": 0.10,
+                "description": f"{change_pct:+.1f}% move"
+            })
 
         # Determine direction from momentum
         if change_pct > self.premarket_momentum_threshold * 100:
@@ -189,6 +209,11 @@ class Friday0DTESignal(BaseSignal):
                 if len(high_oi) > 0:
                     factors.append(f"High OI on {len(high_oi)} OTM strikes")
                     confidence += 0.2
+                    breakdown_components.append({
+                        "name": "High open interest",
+                        "value": 0.20,
+                        "description": f"{len(high_oi)} OTM strikes with OI >= {self.oi_threshold}"
+                    })
 
                 # Check for unusual volume
                 avg_volume = otm_options['volume'].mean() if 'volume' in otm_options else 0
@@ -197,12 +222,16 @@ class Friday0DTESignal(BaseSignal):
                     if len(high_vol) > 0:
                         factors.append(f"Unusual volume on {len(high_vol)} strikes")
                         confidence += 0.2
+                        breakdown_components.append({
+                            "name": "Unusual volume",
+                            "value": 0.20,
+                            "description": f"{len(high_vol)} strikes with >2x avg volume"
+                        })
 
-        # Factor 3: Valid entry window (+0.1)
+        # Factor 3: Valid entry window (no confidence boost, just logged)
         if self.is_valid_entry_window():
             day_type = "Friday" if self.is_friday() else "Thursday"
             factors.append(f"Within {day_type} entry window")
-            confidence += 0.1
 
         is_favorable = confidence >= 0.5 and direction != SignalDirection.NEUTRAL
 
@@ -210,7 +239,8 @@ class Friday0DTESignal(BaseSignal):
             "is_favorable": is_favorable,
             "direction": direction,
             "confidence": min(confidence, 1.0),
-            "factors": factors
+            "factors": factors,
+            "breakdown_components": breakdown_components
         }
 
     def _get_best_strikes(self, current_price: float, direction: SignalDirection,

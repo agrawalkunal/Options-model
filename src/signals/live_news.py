@@ -96,10 +96,10 @@ class LiveNewsSignal(BaseSignal):
                 result = self._analyze_article(article)
 
                 if result is not None:
-                    direction, confidence, matched_keywords = result
+                    direction, base_confidence, matched_keywords, breakdown_components = result
 
                     # Only trigger if confidence >= 0.5 (actionable threshold)
-                    if confidence < 0.5:
+                    if base_confidence < 0.5:
                         continue
 
                     # Mark as alerted
@@ -114,9 +114,9 @@ class LiveNewsSignal(BaseSignal):
                         return None
 
                     # Determine strength
-                    if confidence >= 0.8:
+                    if base_confidence >= 0.8:
                         strength = SignalStrength.STRONG
-                    elif confidence >= 0.6:
+                    elif base_confidence >= 0.6:
                         strength = SignalStrength.MODERATE
                     else:
                         strength = SignalStrength.WEAK
@@ -133,7 +133,15 @@ class LiveNewsSignal(BaseSignal):
                     )
 
                     # Apply confidence boost from price comparison
-                    final_confidence = min(confidence + price_boost, 1.0)
+                    final_confidence = min(base_confidence + price_boost, 1.0)
+
+                    # Add price boost to breakdown if applicable
+                    if price_boost > 0:
+                        breakdown_components.append({
+                            "name": "Price comparison boost",
+                            "value": price_boost,
+                            "description": "Elevated option pricing detected"
+                        })
 
                     # Re-evaluate strength with updated confidence
                     if final_confidence >= 0.8:
@@ -157,6 +165,11 @@ class LiveNewsSignal(BaseSignal):
                             "current_price": current_price,
                             "minutes_ago": int((datetime.now() - article.published).total_seconds() / 60),
                             "price_comparison_boost": price_boost,
+                            "confidence_breakdown": {
+                                "components": breakdown_components,
+                                "base_confidence": base_confidence,
+                                "final_confidence": final_confidence
+                            },
                         },
                         recommended_strikes=enhanced_strikes
                     )
@@ -177,7 +190,7 @@ class LiveNewsSignal(BaseSignal):
             article: NewsArticle to analyze
 
         Returns:
-            Tuple of (direction, confidence, matched_keywords) or None
+            Tuple of (direction, confidence, matched_keywords, breakdown_components) or None
         """
         title_lower = article.title.lower()
         summary_lower = article.summary.lower() if article.summary else ""
@@ -204,21 +217,36 @@ class LiveNewsSignal(BaseSignal):
             # Neutral - no signal
             return None
 
-        # Calculate confidence
-        # Base: 0.4
+        # Calculate confidence and build breakdown
+        # Base: 0.0 (requires evidence to reach actionable threshold)
         # +0.15 per keyword match
         # +0.1 if from major source
-        confidence = 0.4
-        confidence += match_count * 0.15
+        breakdown_components = []
+        confidence = 0.0
+
+        # Keyword matches contribution
+        keyword_boost = match_count * 0.15
+        confidence += keyword_boost
+        if match_count > 0:
+            breakdown_components.append({
+                "name": f"Keyword matches ({match_count})",
+                "value": keyword_boost,
+                "description": ", ".join(matched_keywords[:3]) + ("..." if match_count > 3 else "")
+            })
 
         # Check if from major source
         is_major_source = any(src in source_lower for src in MAJOR_SOURCES)
         if is_major_source:
             confidence += 0.1
+            breakdown_components.append({
+                "name": "Major news source",
+                "value": 0.10,
+                "description": article.source
+            })
 
         confidence = min(confidence, 1.0)
 
-        return (direction, confidence, matched_keywords)
+        return (direction, confidence, matched_keywords, breakdown_components)
 
     def clear_alert_history(self):
         """Clear the alert history to allow re-alerting on same headlines."""

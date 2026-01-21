@@ -69,23 +69,26 @@ class DiscordNotifier:
                 inline=True
             )
 
-            # Signal strength field
+            # Signal strength field (compact)
             strength_emoji = {
                 SignalStrength.STRONG: "🔥",
                 SignalStrength.MODERATE: "⚡",
                 SignalStrength.WEAK: "💡"
             }
-            strength_value = f"{strength_emoji.get(signal.strength, '')} {signal.strength.name}\nConfidence: {signal.confidence:.0%}"
-
-            # Add price comparison boost indicator if present
-            price_boost = details.get("price_comparison_boost", 0)
-            if price_boost > 0:
-                strength_value += f"\n📊 +{price_boost:.0%} price boost"
+            strength_value = f"{strength_emoji.get(signal.strength, '')} {signal.strength.name}"
 
             embed.add_embed_field(
                 name="💪 Strength",
                 value=strength_value,
                 inline=True
+            )
+
+            # Confidence breakdown field
+            breakdown_text = self._format_confidence_breakdown(details, signal.confidence)
+            embed.add_embed_field(
+                name="📊 Confidence Breakdown",
+                value=breakdown_text,
+                inline=False
             )
 
             # Catalyst details field
@@ -153,6 +156,49 @@ class DiscordNotifier:
 
         else:
             return f"**Type:** {catalyst_type}"
+
+    def _format_confidence_breakdown(self, details: dict, final_confidence: float) -> str:
+        """Format confidence breakdown for display.
+
+        Args:
+            details: Signal details containing confidence_breakdown
+            final_confidence: The final confidence value
+
+        Returns:
+            Formatted string showing breakdown
+        """
+        breakdown = details.get("confidence_breakdown")
+
+        if not breakdown or not breakdown.get("components"):
+            # Fallback if no breakdown available
+            return f"**Total:** {final_confidence:.0%}"
+
+        components = breakdown["components"]
+        lines = []
+
+        # Add each component
+        for comp in components:
+            name = comp["name"]
+            value = comp["value"]
+            description = comp.get("description", "")
+
+            # Format: "+ 15% Keyword matches (3) - description"
+            if description:
+                lines.append(f"+ **{value:.0%}** {name}\n  _{description}_")
+            else:
+                lines.append(f"+ **{value:.0%}** {name}")
+
+        # Add separator and total
+        lines.append("─" * 18)
+
+        # Check if total was capped
+        raw_total = sum(c["value"] for c in components)
+        if raw_total > 1.0:
+            lines.append(f"= **{final_confidence:.0%}** Total _(capped)_")
+        else:
+            lines.append(f"= **{final_confidence:.0%}** Total")
+
+        return "\n".join(lines)
 
     def _format_strikes(self, strikes: list) -> str:
         """Format strike recommendations for display."""

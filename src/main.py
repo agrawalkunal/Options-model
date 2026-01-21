@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from src.signals import AdSectorSignal, CompanyNewsSignal, Friday0DTESignal, LiveNewsSignal, Signal
 from src.alerts import get_notifier
 from src.data.schwab_client import get_client
-from src.data.options_history import get_collector, get_options_db
+from src.data.options_history import get_collector, get_options_db, get_earnings_manager
 
 # Load environment variables
 load_dotenv()
@@ -68,6 +68,9 @@ class TradingAlertSystem:
         # Options history data collector
         self.options_collector = get_collector()
         self.options_db = get_options_db()
+
+        # Earnings calendar manager (for excluding earnings weeks from averages)
+        self.earnings_manager = get_earnings_manager()
 
     def is_trading_day(self) -> bool:
         """Check if today is Thursday or Friday."""
@@ -215,6 +218,21 @@ class TradingAlertSystem:
         except Exception as e:
             logger.error(f"History cleanup error: {e}")
 
+    def refresh_earnings_calendar(self):
+        """Refresh the earnings calendar from yfinance.
+
+        Called weekly on Mondays to ensure earnings dates are up to date.
+        Earnings weeks are excluded from price averaging calculations.
+        """
+        try:
+            success = self.earnings_manager.refresh_earnings_calendar('APP')
+            if success:
+                logger.info("Earnings calendar refreshed successfully")
+            else:
+                logger.warning("No earnings dates found during refresh")
+        except Exception as e:
+            logger.error(f"Earnings calendar refresh error: {e}")
+
     def run(self):
         """Start the main loop with scheduled checks."""
         logger.info("=" * 50)
@@ -248,6 +266,12 @@ class TradingAlertSystem:
 
         # Schedule daily summary at market close
         schedule.every().day.at("16:10").do(self.send_daily_summary)
+
+        # Schedule weekly earnings calendar refresh (Monday 9:00 AM)
+        schedule.every().monday.at("09:00").do(self.refresh_earnings_calendar)
+
+        # Run initial earnings calendar refresh on startup
+        self.refresh_earnings_calendar()
 
         # Run initial checks
         self.run_check()
