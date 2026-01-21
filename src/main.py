@@ -232,12 +232,12 @@ class TradingAlertSystem:
             logger.error(f"Average calculation error: {e}")
 
     def cleanup_old_history(self):
-        """Remove option price data older than 6 weeks."""
+        """Remove option price data older than 10 weeks."""
         if not self.is_trading_day():
             return
 
         try:
-            deleted = self.options_db.cleanup_old_data(weeks=6)
+            deleted = self.options_db.cleanup_old_data(weeks=10)
             if deleted > 0:
                 logger.info(f"Cleaned up {deleted} old option price snapshots")
         except Exception as e:

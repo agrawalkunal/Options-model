@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration constants
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'options_history.db')
-HISTORY_WEEKS = 6
+HISTORY_WEEKS = 10
 PRICE_ELEVATION_THRESHOLD = 0.34  # 34% above average
 PRICE_ELEVATION_BOOST = 0.3
 
