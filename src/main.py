@@ -1,6 +1,7 @@
-"""Main entry point for APP Options Trading Alert System.
+"""Main entry point for Options Trading Alert System.
 
 This module runs the signal detection loop and sends alerts via Discord.
+Supports multiple symbols configured in src/config.py.
 Designed to run on Thursday and Friday during market hours.
 """
 
@@ -22,6 +23,7 @@ from src.signals import AdSectorSignal, CompanyNewsSignal, Friday0DTESignal, Liv
 from src.alerts import get_notifier
 from src.data.schwab_client import get_client
 from src.data.options_history import get_collector, get_options_db, get_earnings_manager
+from src.config import TRACKED_SYMBOLS
 
 # Load environment variables
 load_dotenv()
@@ -51,12 +53,19 @@ class TradingAlertSystem:
     """Main trading alert system that orchestrates signal detection and notifications."""
 
     def __init__(self):
+        # Tracked symbols
+        self.symbols = TRACKED_SYMBOLS
+
         # Standard signals (checked every 5 minutes)
+        # Create Friday0DTE signal for each tracked symbol
         self.signals = [
             AdSectorSignal(),
             CompanyNewsSignal(),
-            Friday0DTESignal(),
         ]
+        # Add 0DTE signal for each symbol
+        for symbol in self.symbols:
+            self.signals.append(Friday0DTESignal(symbol))
+
         # Live news signal (checked every 2 minutes)
         self.live_news_signal = LiveNewsSignal()
         self.notifier = get_notifier()
@@ -115,10 +124,13 @@ class TradingAlertSystem:
 
     def _is_duplicate(self, signal: Signal) -> bool:
         """Check if a similar signal was already sent recently."""
-        for recent in self.signals_today[-10:]:
-            # Same signal type within last hour
+        signal_symbol = signal.details.get("symbol", "")
+        for recent in self.signals_today[-20:]:
+            recent_symbol = recent.details.get("symbol", "")
+            # Same signal type and symbol within last hour
             if (recent.name == signal.name and
                 recent.direction == signal.direction and
+                recent_symbol == signal_symbol and
                 (signal.timestamp - recent.timestamp).seconds < 3600):
                 return True
         return False
@@ -164,12 +176,19 @@ class TradingAlertSystem:
             logger.error(f"Error checking live news: {e}")
 
     def send_daily_summary(self):
-        """Send end-of-day summary."""
+        """Send end-of-day summary for all tracked symbols."""
         try:
-            quote = self.market_client.get_quote("APP")
-            change_pct = quote.get("change_pct", 0)
+            # Collect performance for all tracked symbols
+            symbol_changes = {}
+            for symbol in self.symbols:
+                try:
+                    quote = self.market_client.get_quote(symbol)
+                    symbol_changes[symbol] = quote.get("change_pct", 0)
+                except Exception as e:
+                    logger.warning(f"Could not get quote for {symbol}: {e}")
+                    symbol_changes[symbol] = 0
 
-            self.notifier.send_daily_summary(self.signals_today, change_pct)
+            self.notifier.send_daily_summary(self.signals_today, symbol_changes)
             logger.info("Daily summary sent")
 
             # Reset for next day
@@ -178,19 +197,25 @@ class TradingAlertSystem:
             logger.error(f"Error sending daily summary: {e}")
 
     def collect_options_data(self):
-        """Collect option price snapshot for historical tracking."""
+        """Collect option price snapshots for all tracked symbols."""
         if not self.is_trading_day():
             return
 
         if not self.is_market_hours():
             return
 
-        try:
-            count = self.options_collector.collect_snapshot()
-            if count > 0:
-                logger.debug(f"Collected {count} option price snapshots")
-        except Exception as e:
-            logger.error(f"Options data collection error: {e}")
+        total_count = 0
+        for symbol in self.symbols:
+            try:
+                count = self.options_collector.collect_snapshot(symbol)
+                if count > 0:
+                    total_count += count
+                    logger.debug(f"Collected {count} option snapshots for {symbol}")
+            except Exception as e:
+                logger.error(f"Options data collection error for {symbol}: {e}")
+
+        if total_count > 0:
+            logger.debug(f"Total option snapshots collected: {total_count}")
 
     def recalculate_averages(self):
         """Recalculate 6-week rolling averages at end of trading day."""
@@ -219,34 +244,37 @@ class TradingAlertSystem:
             logger.error(f"History cleanup error: {e}")
 
     def refresh_earnings_calendar(self):
-        """Refresh the earnings calendar from yfinance.
+        """Refresh the earnings calendar from yfinance for all tracked symbols.
 
         Called weekly on Mondays to ensure earnings dates are up to date.
         Earnings weeks are excluded from price averaging calculations.
         """
-        try:
-            success = self.earnings_manager.refresh_earnings_calendar('APP')
-            if success:
-                logger.info("Earnings calendar refreshed successfully")
-            else:
-                logger.warning("No earnings dates found during refresh")
-        except Exception as e:
-            logger.error(f"Earnings calendar refresh error: {e}")
+        for symbol in self.symbols:
+            try:
+                success = self.earnings_manager.refresh_earnings_calendar(symbol)
+                if success:
+                    logger.info(f"Earnings calendar refreshed for {symbol}")
+                else:
+                    logger.debug(f"No earnings dates found for {symbol}")
+            except Exception as e:
+                logger.error(f"Earnings calendar refresh error for {symbol}: {e}")
 
     def run(self):
         """Start the main loop with scheduled checks."""
         logger.info("=" * 50)
-        logger.info("APP Options Trading Alert System Starting")
+        logger.info("Options Trading Alert System Starting")
         logger.info("=" * 50)
+        logger.info(f"Tracked symbols: {', '.join(self.symbols)}")
         logger.info(f"Standard signal check interval: {CHECK_INTERVAL} minutes")
         logger.info(f"Live news check interval: {LIVE_NEWS_INTERVAL} minutes")
         logger.info(f"Options data collection: Every {CHECK_INTERVAL} minutes")
         logger.info(f"Active days: Thursday, Friday")
         logger.info(f"Market hours: {PREMARKET_START} - {MARKET_CLOSE}")
 
-        # Log options history status
-        snapshot_count = self.options_db.get_snapshot_count()
-        logger.info(f"Historical option snapshots in DB: {snapshot_count}")
+        # Log options history status for each symbol
+        for symbol in self.symbols:
+            snapshot_count = self.options_db.get_snapshot_count(symbol)
+            logger.info(f"Historical snapshots for {symbol}: {snapshot_count}")
         logger.info("=" * 50)
 
         # Schedule standard signal checks (every 5 minutes)
@@ -295,6 +323,9 @@ def test_mode():
 
     system = TradingAlertSystem()
 
+    # Log tracked symbols
+    logger.info(f"Tracked symbols: {', '.join(system.symbols)}")
+
     # Test Discord webhook
     logger.info("Testing Discord webhook...")
     if system.notifier.send_test_message():
@@ -321,11 +352,12 @@ def test_mode():
     else:
         logger.info("No live news signal detected")
 
-    # Get current APP quote
-    quote = system.market_client.get_quote("APP")
-    if quote:
-        logger.info(f"Current APP price: ${quote.get('price', 'N/A')}")
-        logger.info(f"Change: {quote.get('change_pct', 0):+.2f}%")
+    # Get current quotes for all tracked symbols
+    logger.info("Current prices:")
+    for symbol in system.symbols:
+        quote = system.market_client.get_quote(symbol)
+        if quote:
+            logger.info(f"  {symbol}: ${quote.get('price', 'N/A'):.2f} ({quote.get('change_pct', 0):+.2f}%)")
 
 
 def main():

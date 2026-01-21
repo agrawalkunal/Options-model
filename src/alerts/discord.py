@@ -1,4 +1,4 @@
-"""Discord webhook notifications for APP options signals."""
+"""Discord webhook notifications for options signals."""
 
 import os
 import logging
@@ -50,9 +50,12 @@ class DiscordNotifier:
                 emoji = "⚪"
                 direction_text = "NEUTRAL"
 
+            # Get symbol from signal details, default to APP
+            symbol = signal.details.get("symbol", "APP")
+
             # Create the embed
             embed = DiscordEmbed(
-                title=f"{emoji} APP OPTIONS ALERT {emoji}",
+                title=f"{emoji} {symbol} OPTIONS ALERT {emoji}",
                 description=f"**Signal:** {signal.name}\n**Direction:** {direction_text}",
                 color=color
             )
@@ -117,7 +120,7 @@ class DiscordNotifier:
             )
 
             # Footer
-            embed.set_footer(text="APP Options Trading Model | Not Financial Advice")
+            embed.set_footer(text="Options Trading Alert System | Not Financial Advice")
 
             webhook.add_embed(embed)
             response = webhook.execute()
@@ -149,10 +152,11 @@ class DiscordNotifier:
             return f"**Type:** Company News\n**Headline:** {headline}...\n**Source:** {source}"
 
         elif catalyst_type == "friday_0dte":
+            symbol = details.get("symbol", "APP")
             premarket = details.get("premarket_move", 0)
             factors = details.get("setup_factors", [])
             factors_text = "\n".join([f"• {f}" for f in factors[:3]])
-            return f"**Type:** Friday 0DTE Setup\n**Pre-market:** {premarket:+.1f}%\n**Factors:**\n{factors_text}"
+            return f"**Type:** {symbol} 0DTE Setup\n**Pre-market:** {premarket:+.1f}%\n**Factors:**\n{factors_text}"
 
         else:
             return f"**Type:** {catalyst_type}"
@@ -241,7 +245,7 @@ class DiscordNotifier:
         try:
             webhook = DiscordWebhook(
                 url=self.webhook_url,
-                content="🧪 **APP Options Alert System Test**\n\nWebhook is configured correctly!"
+                content="🧪 **Options Alert System Test**\n\nWebhook is configured correctly!"
             )
             response = webhook.execute()
 
@@ -256,12 +260,12 @@ class DiscordNotifier:
             logger.error(f"Error sending test message: {e}")
             return False
 
-    def send_daily_summary(self, signals_today: list, price_change: float) -> bool:
+    def send_daily_summary(self, signals_today: list, symbol_changes: dict) -> bool:
         """Send end-of-day summary.
 
         Args:
             signals_today: List of signals generated today
-            price_change: APP's price change for the day
+            symbol_changes: Dict of symbol -> price change percentage
 
         Returns:
             True if sent successfully
@@ -273,17 +277,27 @@ class DiscordNotifier:
             webhook = DiscordWebhook(url=self.webhook_url)
 
             embed = DiscordEmbed(
-                title="📋 Daily Summary - APP Options",
+                title="📋 Daily Summary - Options Alerts",
                 description=f"**Date:** {datetime.now().strftime('%Y-%m-%d')}",
                 color="1E90FF"
             )
 
-            # Price summary
-            direction = "📈" if price_change > 0 else "📉" if price_change < 0 else "➡️"
+            # Price summary for all symbols
+            if isinstance(symbol_changes, dict):
+                price_lines = []
+                for symbol, change in symbol_changes.items():
+                    direction = "📈" if change > 0 else "📉" if change < 0 else "➡️"
+                    price_lines.append(f"{direction} **{symbol}:** {change:+.2f}%")
+                price_text = "\n".join(price_lines)
+            else:
+                # Backward compatibility: single price change value
+                direction = "📈" if symbol_changes > 0 else "📉" if symbol_changes < 0 else "➡️"
+                price_text = f"{direction} {symbol_changes:+.2f}%"
+
             embed.add_embed_field(
-                name="📊 APP Performance",
-                value=f"{direction} {price_change:+.2f}%",
-                inline=True
+                name="📊 Performance",
+                value=price_text,
+                inline=False
             )
 
             # Signals summary
@@ -297,7 +311,7 @@ class DiscordNotifier:
             if signals_today:
                 signals_text = "\n".join([
                     f"• {s.name} ({s.direction.value}) @ {s.timestamp.strftime('%H:%M')}"
-                    for s in signals_today[:5]
+                    for s in signals_today[:10]
                 ])
                 embed.add_embed_field(
                     name="📝 Signal Details",
@@ -305,7 +319,7 @@ class DiscordNotifier:
                     inline=False
                 )
 
-            embed.set_footer(text="APP Options Trading Model")
+            embed.set_footer(text="Options Trading Alert System")
             embed.set_timestamp()
 
             webhook.add_embed(embed)

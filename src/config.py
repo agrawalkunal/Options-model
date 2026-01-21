@@ -6,7 +6,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Stock Configuration
-TICKER = "APP"
+TICKER = "APP"  # Legacy - use TRACKED_SYMBOLS instead
+TRACKED_SYMBOLS = [
+    "APP",
+    "SNDK",
+    "MU",
+    "GS",
+    "GEV",
+    "TSLA",
+]
 ENTRY_DAYS = ["Thursday", "Friday"]  # Days to look for entries
 TARGET_DTE = [0, 1, 2]  # 0-2 DTE options
 TARGET_GAIN = 7.5  # 750% = 7.5x multiplier

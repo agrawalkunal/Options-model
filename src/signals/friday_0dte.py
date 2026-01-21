@@ -19,8 +19,9 @@ logger = logging.getLogger(__name__)
 class Friday0DTESignal(BaseSignal):
     """Detects favorable 0DTE setups on Thursday and Friday."""
 
-    def __init__(self):
-        super().__init__("Friday 0DTE Setup")
+    def __init__(self, symbol: str = "APP"):
+        super().__init__(f"{symbol} 0DTE Setup")
+        self.symbol = symbol
         self.market_client = get_client()
 
         # Thresholds
@@ -55,16 +56,16 @@ class Friday0DTESignal(BaseSignal):
 
         try:
             # Get current quote and price data
-            quote = self.market_client.get_quote("APP")
+            quote = self.market_client.get_quote(self.symbol)
             current_price = quote.get("price", 0)
             change_pct = quote.get("change_pct", 0)
 
             if not current_price:
-                logger.warning("Could not get APP price")
+                logger.warning(f"Could not get {self.symbol} price")
                 return None
 
             # Get options chain for nearest expiration (should be 0DTE on Friday)
-            chain = self.market_client.get_options_chain("APP")
+            chain = self.market_client.get_options_chain(self.symbol)
 
             if not chain.get("calls") is not None:
                 logger.warning("Could not get options chain")
@@ -106,7 +107,7 @@ class Friday0DTESignal(BaseSignal):
             dte = 0 if self.is_friday() else 1
             option_type = 'CALL' if direction == SignalDirection.CALL else 'PUT'
             enhanced_strikes, price_boost = self.evaluate_price_comparison(
-                strikes, current_price, option_type, dte
+                strikes, current_price, option_type, dte, symbol=self.symbol
             )
 
             # Apply confidence boost from price comparison
@@ -133,6 +134,7 @@ class Friday0DTESignal(BaseSignal):
                 confidence=final_confidence,
                 timestamp=datetime.now(),
                 details={
+                    "symbol": self.symbol,
                     "catalyst_type": "friday_0dte",
                     "current_price": current_price,
                     "premarket_move": change_pct,

@@ -218,7 +218,8 @@ class BaseSignal(ABC):
             return strikes
 
     def evaluate_price_comparison(self, strikes: List[dict], stock_price: float,
-                                   option_type: str, dte: int = 0) -> Tuple[List[dict], float]:
+                                   option_type: str, dte: int = 0,
+                                   symbol: str = 'APP') -> Tuple[List[dict], float]:
         """Evaluate strikes against historical price averages.
 
         Adds price comparison data to each strike and returns confidence boost
@@ -229,6 +230,7 @@ class BaseSignal(ABC):
             stock_price: Current stock price
             option_type: 'CALL' or 'PUT'
             dte: Days to expiration (0 or 1)
+            symbol: Stock symbol
 
         Returns:
             Tuple of (enhanced_strikes, max_confidence_boost)
@@ -238,7 +240,7 @@ class BaseSignal(ABC):
         try:
             from ..data.options_history import get_price_checker
             checker = get_price_checker()
-            return checker.evaluate_strikes(strikes, stock_price, option_type, dte)
+            return checker.evaluate_strikes(strikes, stock_price, option_type, dte, symbol)
         except Exception as e:
             logger.warning(f"Price comparison unavailable: {e}")
             return strikes, 0.0
